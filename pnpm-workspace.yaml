@@ -1,2 +1,8 @@
 allowBuilds:
+  '@prisma/engines': true
+  '@prisma/client': true
+  prisma: true
+  '@scarf/scarf': false
+  argon2: true
+  msgpackr-extract: false
   unrs-resolver: true

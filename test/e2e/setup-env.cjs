@@ -1,0 +1,9 @@
+process.env.NODE_ENV = 'test';
+process.env.JWT_ACCESS_SECRET = 'e2e-jwt-secret-with-more-than-32-characters';
+process.env.REFRESH_TOKEN_PEPPER = 'e2e-refresh-pepper-with-more-than-32-characters';
+process.env.REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+process.env.META_APP_SECRET = 'e2e-app-secret-test-only';
+process.env.META_WEBHOOK_VERIFY_TOKEN = 'e2e-verify-token-test-only';
+process.env.META_PAGE_ID = 'convox-e2e-page';
+process.env.META_PAGE_ACCESS_TOKEN = 'fake-development-page-token';
+process.env.CORS_ORIGINS = 'http://localhost:3000';

@@ -1,75 +1,111 @@
-export interface DatabaseConfig {
-  /** Full connection string, if provided (this is what Supabase gives you). */
-  url?: string;
+import { z } from 'zod';
+
+const optionalSecret = z.string().optional();
+
+const environmentSchema = z.object({
+  NODE_ENV: z
+    .enum(['development', 'test', 'production'])
+    .default('development'),
+  PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+  DATABASE_URL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .url()
+      .refine(
+        (value) =>
+          ['postgres:', 'postgresql:'].includes(new URL(value).protocol),
+        'Must be a PostgreSQL URL',
+      )
+      .optional(),
+  ),
+  DB_HOST: z.string().default('localhost'),
+  DB_PORT: z.coerce.number().int().min(1).max(65535).default(5432),
+  DB_USER: z.string().default('postgres'),
+  DB_PASSWORD: z.string().default('postgres'),
+  DB_NAME: z.string().default('convox_db'),
+  DB_SSL: z.enum(['true', 'false']).optional(),
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+  DB_SSL_REJECT_UNAUTHORIZED: z.enum(['true', 'false']).optional(),
+  JWT_ACCESS_SECRET: z.string().min(32),
+  JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).default(900),
+  REFRESH_TOKEN_PEPPER: z.string().min(32),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  META_APP_ID: optionalSecret,
+  META_APP_SECRET: optionalSecret,
+  META_WEBHOOK_VERIFY_TOKEN: optionalSecret,
+  META_GRAPH_API_VERSION: z.string().default('v26.0'),
+  META_PAGE_ID: optionalSecret,
+  META_PAGE_ACCESS_TOKEN: optionalSecret,
+  CONVERSATION_REOPEN_WINDOW_HOURS: z.coerce.number().int().min(1).default(24),
+  SEED_ADMIN_EMAIL: z.string().email().optional(),
+  SEED_ADMIN_PASSWORD: z.string().min(12).optional(),
+  SEED_AGENT_PASSWORD: z.string().min(12).optional(),
+});
+
+export type Environment = z.infer<typeof environmentSchema> & {
+  DATABASE_URL: string;
+};
+
+/** Validate settings without ever including secret values in validation errors. */
+export function validateEnvironment(
+  input: Record<string, unknown>,
+): Environment {
+  const result = environmentSchema.safeParse(input);
+  if (!result.success) {
+    const failures = result.error.issues
+      .map(
+        (issue) => `${issue.path.join('.') || 'environment'}: ${issue.message}`,
+      )
+      .join('; ');
+    throw new Error(`Invalid environment configuration: ${failures}`);
+  }
+
+  const values = result.data;
+  const url = new URL(
+    values.DATABASE_URL ??
+      makeDatabaseUrl({
+        host: values.DB_HOST,
+        port: values.DB_PORT,
+        username: values.DB_USER,
+        password: values.DB_PASSWORD,
+        database: values.DB_NAME,
+        ssl: values.DB_SSL
+          ? values.DB_SSL === 'true'
+          : !['localhost', '127.0.0.1'].includes(values.DB_HOST),
+      }),
+  );
+  const hostname = url.hostname;
+  const sslEnabled = values.DB_SSL
+    ? values.DB_SSL === 'true'
+    : !['localhost', '127.0.0.1'].includes(hostname);
+  if (sslEnabled && !url.searchParams.has('sslmode'))
+    url.searchParams.set('sslmode', 'require');
+  if (values.DB_SSL && !sslEnabled) url.searchParams.set('sslmode', 'disable');
+  if (!url.searchParams.has('connection_limit'))
+    url.searchParams.set('connection_limit', String(values.DB_POOL_MAX));
+  if (sslEnabled && values.DB_SSL_REJECT_UNAUTHORIZED === 'false') {
+    url.searchParams.set('sslaccept', 'accept_invalid_certs');
+  }
+  const databaseUrl = url.toString();
+
+  return { ...values, DATABASE_URL: databaseUrl };
+}
+
+function makeDatabaseUrl(input: {
   host: string;
   port: number;
   username: string;
   password: string;
   database: string;
-  /** false for plain local Postgres; an options object when SSL is required. */
-  ssl: false | { rejectUnauthorized: boolean };
-  poolMax: number;
-}
-
-export interface AppConfig {
-  nodeEnv: string;
-  port: number;
-  database: DatabaseConfig;
-}
-
-/**
- * Decides how to connect to Postgres, supporting two setups without
- * needing separate code paths:
- *
- *  - Local dev: DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME (discrete vars),
- *    no SSL, since a local Postgres install isn't listening for it.
- *  - Supabase (or any managed Postgres): a single DATABASE_URL, which is
- *    what Supabase's dashboard gives you directly. SSL is required there.
- *
- * Resolution order:
- *  1. If DATABASE_URL is set, use it as the connection target.
- *  2. Otherwise, fall back to the discrete DB_* vars (local dev default).
- *
- * SSL is auto-detected from the target host (anything that isn't
- * localhost/127.0.0.1 is assumed to need SSL, which covers Supabase, RDS,
- * etc.) but can always be overridden explicitly with DB_SSL=true|false.
- */
-export default (): AppConfig => {
-  const nodeEnv = process.env.NODE_ENV ?? 'development';
-  const databaseUrl = process.env.DATABASE_URL;
-
-  const targetHost = databaseUrl
-    ? safeHostnameFrom(databaseUrl)
-    : (process.env.DB_HOST ?? 'localhost');
-
-  const isLocalHost = ['localhost', '127.0.0.1'].includes(targetHost);
-
-  const sslEnv = process.env.DB_SSL; // 'true' | 'false' | undefined
-  const sslEnabled = sslEnv !== undefined ? sslEnv === 'true' : !isLocalHost;
-
-  const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true';
-
-  return {
-    nodeEnv,
-    port: parseInt(process.env.PORT ?? '4000', 10),
-    database: {
-      url: databaseUrl,
-      host: process.env.DB_HOST ?? 'localhost',
-      port: parseInt(process.env.DB_PORT ?? '5432', 10),
-      username: process.env.DB_USER ?? 'postgres',
-      password: process.env.DB_PASSWORD ?? 'postgres',
-      database: process.env.DB_NAME ?? 'fb_multi_page_app',
-      ssl: sslEnabled ? { rejectUnauthorized } : false,
-      poolMax: parseInt(process.env.DB_POOL_MAX ?? '10', 10),
-    },
-  };
-};
-
-function safeHostnameFrom(connectionString: string): string {
-  try {
-    return new URL(connectionString).hostname;
-  } catch {
-    // Malformed URL — treat as non-local so SSL defaults on rather than off.
-    return 'unknown';
-  }
+  ssl: boolean;
+}): string {
+  const url = new URL(
+    `postgresql://${encodeURIComponent(input.username)}:${encodeURIComponent(input.password)}@${input.host}:${input.port}/${encodeURIComponent(input.database)}`,
+  );
+  url.searchParams.set('schema', 'public');
+  if (input.ssl) url.searchParams.set('sslmode', 'require');
+  return url.toString();
 }

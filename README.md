@@ -1,98 +1,67 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Convox Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS API for Convox customer messaging, assignments, and Messenger integration.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Requirements
 
-## Description
+- Node.js 22+
+- pnpm 11+
+- Docker Compose (PostgreSQL and Redis)
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## Local development
 
 ```bash
-$ pnpm install
+cp .env.example .env
+docker compose up -d postgres redis
+pnpm install
+pnpm db:generate
+pnpm db:deploy
+pnpm start:dev
 ```
 
-## Compile and run the project
+The API listens on `http://localhost:4000`. Swagger is at `/api/docs` and readiness is at `/api/health/ready`.
+
+Set unique development values for `JWT_ACCESS_SECRET` and `REFRESH_TOKEN_PEPPER` before starting. Do not use the sample values in production. `DATABASE_URL` is used by Prisma CLI commands; the application also supports the individual `DB_*` settings when `DATABASE_URL` is not set.
+
+## Database workflow
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+pnpm db:generate
+pnpm db:migrate       # create/apply a local development migration
+pnpm db:deploy        # apply committed migrations in deployed environments
+pnpm db:seed          # requires seed credentials in .env
 ```
 
-## Run tests
+The initial migration includes the partial unique index that prevents more than one active conversation for a Page/contact pair.
+
+## Checks
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm typecheck
+pnpm lint
+pnpm exec jest --runInBand
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/convox_db?schema=public pnpm test:integration
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/convox_db?schema=public pnpm test:e2e
+pnpm build
 ```
 
-## Deployment
+Integration and E2E checks require the local PostgreSQL and Redis services. If their default host ports are occupied, launch Compose with alternate ports and set matching `DATABASE_URL` and `REDIS_URL` values for the test commands. E2E uses fake Meta credentials and mocks the Graph API request.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## API surface
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+The versioned REST API is under `/api/v1`:
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
+- Auth: `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`
+- Users/agents: `/users/admins`, `/agents`
+- Pages/membership: `/pages`, `/pages/:pageId/agents`
+- Conversations/messages/assignment: `/conversations`
+- Analytics: `/analytics/overview`, `/analytics/agents`
+- Meta callback: `/webhooks/meta`
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Socket.IO clients connect to `/realtime` with an access token in the handshake `auth.token`. Room access is server-authorized against the current user and assignment.
 
-## Resources
+## Temporary development Facebook Page
 
-Check out a few resources that may come in handy when working with NestJS:
+`META_PAGE_ID` and `META_PAGE_ACCESS_TOKEN` are temporary development configuration for a single Page. They must be retired when database-backed Page management is implemented. Meta credentials are read only through the infrastructure credential provider and must not be logged or returned by API endpoints.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Configure `META_APP_ID`, `META_APP_SECRET`, and `META_WEBHOOK_VERIFY_TOKEN` for webhook ingestion. The public webhook callback is `/api/v1/webhooks/meta`; configure Meta to send webhook requests there after making the service reachable.
